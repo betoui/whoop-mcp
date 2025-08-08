@@ -54,12 +54,13 @@ type WhoopUser struct {
 }
 
 type WhoopRecovery struct {
-	CycleID   string    `json:"cycle_id"`
-	SleepID   string    `json:"sleep_id"`
-	UserID    int       `json:"user_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Score     struct {
+	CycleID    int64     `json:"cycle_id"`
+	SleepID    string    `json:"sleep_id"` // UUID in V2
+	UserID     int64     `json:"user_id"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ScoreState string    `json:"score_state"`
+	Score      struct {
 		UserCalibrating  bool    `json:"user_calibrating"`
 		RecoveryScore    float64 `json:"recovery_score"`
 		RestingHeartRate int     `json:"resting_heart_rate"`
@@ -70,13 +71,17 @@ type WhoopRecovery struct {
 }
 
 type WhoopSleep struct {
-	ID        string    `json:"id"`
-	UserID    int       `json:"user_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Start     time.Time `json:"start"`
-	End       time.Time `json:"end"`
-	Score     struct {
+	ID             string    `json:"id"`              // UUID in V2
+	V1ID           *int64    `json:"v1_id,omitempty"` // Legacy ID for migration
+	UserID         int64     `json:"user_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Start          time.Time `json:"start"`
+	End            time.Time `json:"end"`
+	TimezoneOffset string    `json:"timezone_offset"`
+	Nap            bool      `json:"nap"`
+	ScoreState     string    `json:"score_state"`
+	Score          struct {
 		StageSummary struct {
 			TotalInBedTimeMilli         int `json:"total_in_bed_time_milli"`
 			TotalAwakeTimeMilli         int `json:"total_awake_time_milli"`
@@ -93,50 +98,55 @@ type WhoopSleep struct {
 			NeedFromRecentStrainMilli int `json:"need_from_recent_strain_milli"`
 			NeedFromRecentNapMilli    int `json:"need_from_recent_nap_milli"`
 		} `json:"sleep_needed"`
-		Respiratory struct {
-			SleepConsistency float64 `json:"sleep_consistency"`
-			SleepEfficiency  float64 `json:"sleep_efficiency"`
-		} `json:"respiratory"`
+		RespiratoryRate            float64 `json:"respiratory_rate"`
+		SleepPerformancePercentage int     `json:"sleep_performance_percentage"`
+		SleepConsistencyPercentage int     `json:"sleep_consistency_percentage"`
+		SleepEfficiencyPercentage  float64 `json:"sleep_efficiency_percentage"`
 	} `json:"score"`
 }
 
 type WhoopWorkout struct {
-	ID         string    `json:"id"`
-	UserID     int       `json:"user_id"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	Timezone   string    `json:"timezone_offset"`
-	SportID    int       `json:"sport_id"`
-	ScoreState string    `json:"score_state"`
-	Score      struct {
-		Strain            float64 `json:"strain"`
-		AverageHeartRate  int     `json:"average_heart_rate"`
-		MaxHeartRate      int     `json:"max_heart_rate"`
-		Kilojoule         float64 `json:"kilojoule"`
-		PercentRecorded   float64 `json:"percent_recorded"`
-		DistanceMeter     float64 `json:"distance_meter"`
-		AltitudeGainMeter float64 `json:"altitude_gain_meter"`
-		AltitudeLossMeter float64 `json:"altitude_loss_meter"`
-		ZoneZeroMilli     int     `json:"zone_zero_milli"`
-		ZoneOneMilli      int     `json:"zone_one_milli"`
-		ZoneTwoMilli      int     `json:"zone_two_milli"`
-		ZoneThreeMilli    int     `json:"zone_three_milli"`
-		ZoneFourMilli     int     `json:"zone_four_milli"`
-		ZoneFiveMilli     int     `json:"zone_five_milli"`
+	ID             string    `json:"id"`              // UUID in V2
+	V1ID           *int64    `json:"v1_id,omitempty"` // Legacy ID for migration
+	UserID         int64     `json:"user_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Start          time.Time `json:"start"`
+	End            time.Time `json:"end"`
+	TimezoneOffset string    `json:"timezone_offset"`
+	SportName      string    `json:"sport_name"`
+	SportID        *int      `json:"sport_id,omitempty"` // Legacy field
+	ScoreState     string    `json:"score_state"`
+	Score          struct {
+		Strain              float64 `json:"strain"`
+		AverageHeartRate    int     `json:"average_heart_rate"`
+		MaxHeartRate        int     `json:"max_heart_rate"`
+		Kilojoule           float64 `json:"kilojoule"`
+		PercentRecorded     float64 `json:"percent_recorded"`
+		DistanceMeter       float64 `json:"distance_meter"`
+		AltitudeGainMeter   float64 `json:"altitude_gain_meter"`
+		AltitudeChangeMeter float64 `json:"altitude_change_meter"`
+		ZoneDurations       struct {
+			ZoneZeroMilli  int `json:"zone_zero_milli"`
+			ZoneOneMilli   int `json:"zone_one_milli"`
+			ZoneTwoMilli   int `json:"zone_two_milli"`
+			ZoneThreeMilli int `json:"zone_three_milli"`
+			ZoneFourMilli  int `json:"zone_four_milli"`
+			ZoneFiveMilli  int `json:"zone_five_milli"`
+		} `json:"zone_durations"`
 	} `json:"score"`
 }
 
 type WhoopCycle struct {
-	ID        string    `json:"id"`
-	UserID    int       `json:"user_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Start     time.Time `json:"start"`
-	End       time.Time `json:"end"`
-	Timezone  string    `json:"timezone_offset"`
-	Score     struct {
+	ID             int64     `json:"id"` // Still integer ID in V2
+	UserID         int64     `json:"user_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Start          time.Time `json:"start"`
+	End            time.Time `json:"end"`
+	TimezoneOffset string    `json:"timezone_offset"`
+	ScoreState     string    `json:"score_state"`
+	Score          struct {
 		Strain           float64 `json:"strain"`
 		Kilojoule        float64 `json:"kilojoule"`
 		AverageHeartRate int     `json:"average_heart_rate"`

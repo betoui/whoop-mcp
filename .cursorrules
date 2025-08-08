@@ -11,7 +11,7 @@ This MCP server connects to Whoop's health tracking API and serves biometric dat
 - **Language**: Go 1.21+
 - **Protocol**: MCP (Model Context Protocol) over JSON-RPC 2.0
 - **Transport**: stdio (for Claude Desktop integration)
-- **External API**: Whoop API v1
+- **External API**: Whoop API V2
 - **Data Storage**: In-memory (expandable to SQLite/PostgreSQL)
 - **Integration**: Next.js TypeScript AI therapist frontend
 
