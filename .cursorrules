@@ -1,0 +1,95 @@
+# Whoop Health Data MCP Server
+
+You are working on a Golang MCP (Model Context Protocol) server that integrates with the Whoop API to provide health data for an AI therapist application.
+
+## Project Context
+
+This MCP server connects to Whoop's health tracking API and serves biometric data (recovery, sleep, strain, workouts) to a Next.js TypeScript AI therapist app. The goal is to provide health context to improve therapy sessions.
+
+## Technology Stack
+
+- **Language**: Go 1.21+
+- **Protocol**: MCP (Model Context Protocol) over JSON-RPC 2.0
+- **Transport**: stdio (for Claude Desktop integration)
+- **External API**: Whoop API v1
+- **Data Storage**: In-memory (expandable to SQLite/PostgreSQL)
+- **Integration**: Next.js TypeScript AI therapist frontend
+
+## Code Style Guidelines
+
+1. **Go Conventions**: Follow standard Go formatting (gofmt, golint)
+2. **Error Handling**: Always handle errors explicitly, never ignore them
+3. **Struct Design**: Use clear, descriptive struct names and JSON tags
+4. **Concurrency**: Use goroutines for API calls when beneficial
+5. **Testing**: Write comprehensive tests for all API integrations and data analysis
+6. **Documentation**: Include detailed comments for complex health analysis logic
+
+## MCP Protocol Requirements
+
+- Implement JSON-RPC 2.0 message handling
+- Support `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`
+- Validate all tool inputs against JSON Schema
+- Return proper error codes and messages
+- Handle concurrent requests safely
+
+## Whoop API Integration
+
+- Use environment variable `WHOOP_API_KEY` for authentication
+- Implement rate limiting (respect API limits)
+- Handle API errors gracefully with user-friendly messages
+- Cache responses when appropriate to reduce API calls
+- Support date range queries for historical data
+
+## Health Data Analysis
+
+- Focus on mental health indicators (stress, sleep quality, recovery trends)
+- Generate therapy-relevant insights and recommendations
+- Identify red flags that need immediate attention
+- Provide actionable data for therapeutic conversations
+- Maintain privacy and data sensitivity awareness
+
+## Key Features to Implement
+
+1. **Health Summary Tool**: Comprehensive overview for therapist
+2. **Stress Indicators**: Analysis of physiological stress markers
+3. **Sleep Analysis**: Sleep quality and patterns for mental health
+4. **Activity Patterns**: Exercise habits and behavioral insights
+5. **Trend Analysis**: Week-over-week health trend detection
+6. **Therapy Context**: Specific insights for therapeutic use
+
+## Common Tasks
+
+When asked to:
+- **Add new tools**: Include proper JSON schema validation and error handling
+- **Modify API calls**: Maintain rate limiting and error handling patterns
+- **Update analysis**: Focus on therapy-relevant insights
+- **Write tests**: Include both unit tests and integration tests with mock APIs
+- **Debug issues**: Check API authentication, rate limits, and data validation
+- **Optimize performance**: Consider caching and concurrent API calls
+
+## Important Notes
+
+- Never log or expose sensitive health data
+- Validate all user inputs thoroughly
+- Handle edge cases (no data, API downtime, invalid dates)
+- Keep therapy insights actionable and non-diagnostic
+- Maintain HIPAA-style privacy considerations even though not medical software
+
+## File Structure
+
+├── main.go                 # MCP server implementation
+├── whoop_client.go        # Whoop API client
+├── health_analysis.go     # Health data analysis logic
+├── mcp_protocol.go        # MCP protocol handling
+├── types.go               # Data structures and types
+├── tests/
+│   ├── whoop_client_test.go
+│   ├── health_analysis_test.go
+│   └── integration_test.go
+├── go.mod
+├── go.sum
+├── README.md
+├── .env.example
+└── Makefile
+
+Always prioritize code safety, data privacy, and therapeutic value when making changes.
