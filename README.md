@@ -1,14 +1,28 @@
 # Whoop Health Data MCP Server
 
-A Golang MCP server that integrates with Whoop's health tracking API to provide biometric data and health insights for AI therapy applications.
+A comprehensive Model Context Protocol (MCP) server that integrates with the **Whoop API V2** to provide health data analysis for AI therapy applications.
+
+> **✅ V2 Ready**: This server uses the latest Whoop API V2 with UUID identifiers and enhanced data structures. V1 will be deprecated October 1, 2025.
 
 ## Features
 
-- **Real-time Health Data**: Recovery, sleep, strain, and workout data from Whoop
+### 🏥 Whoop API V2 Integration
+- **UUID-based IDs**: Future-proof identifiers for all health data
+- **Enhanced Sleep Data**: Performance percentages, consistency metrics, respiratory rate
+- **Improved Workouts**: Sport names, detailed zone durations, altitude changes
+- **Real-time Data**: Recovery, sleep, strain, and workout data from Whoop
+
+### 🧠 AI Therapy Enhancement
 - **Therapy-Focused Analysis**: Mental health indicators and stress patterns
+- **Red Flag Detection**: Automatic identification of concerning health patterns
+- **Stress Indicators**: Physiological stress markers from HRV and heart rate
+- **Sleep Impact Analysis**: Sleep quality patterns and mental health implications
+
+### 🔧 Technical Excellence
 - **MCP Protocol**: Standard integration with Claude and other AI assistants
 - **Privacy-First**: Secure data handling with no persistent storage
 - **Rate Limited**: Respects Whoop API limits with intelligent caching
+- **Concurrent Processing**: Parallel API calls for optimal performance
 
 ## Quick Start
 
