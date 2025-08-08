@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -225,6 +228,12 @@ func (s *MCPServer) sendResponse(id interface{}, result interface{}) {
 
 // sendError sends an error JSON-RPC response
 func (s *MCPServer) sendError(id interface{}, code int, message string, data interface{}) {
+	// Don't send error responses for notifications (null or missing ID)
+	if id == nil {
+		log.Printf("Error for notification (no response sent): %s - %v", message, data)
+		return
+	}
+
 	response := MCPResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -383,6 +392,27 @@ func defineMCPTools() []MCPTool {
 				Required: []string{"metric"},
 			},
 		},
+		{
+			Name:        "setup_whoop_auth",
+			Description: "Guide user through Whoop OAuth setup process",
+			InputSchema: MCPInputSchema{
+				Type: "object",
+				Properties: map[string]interface{}{
+					"client_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Whoop app client ID (optional, will generate URL if provided)",
+					},
+					"authorization_code": map[string]interface{}{
+						"type":        "string",
+						"description": "Authorization code from Whoop (optional, for token exchange)",
+					},
+					"client_secret": map[string]interface{}{
+						"type":        "string",
+						"description": "Whoop app client secret (required if authorization_code provided)",
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -417,9 +447,32 @@ func (s *MCPServer) executeTool(toolName string, arguments json.RawMessage) (str
 		return s.executeActivityAnalysisTool(arguments)
 	case "analyze_health_trends":
 		return s.executeTrendAnalysisTool(arguments)
+	case "setup_whoop_auth":
+		return s.executeWhoopAuthSetupTool(arguments)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
+}
+
+// parseDateRange parses start and end dates, adjusting for same-day queries
+func parseDateRange(startDateStr, endDateStr string) (time.Time, time.Time, error) {
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid start_date format: %w", err)
+	}
+
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid end_date format: %w", err)
+	}
+
+	// For same-day queries, extend end date to end of day to capture all data
+	// Use AddDate to go to the next day, then subtract 1 second to get 23:59:59
+	if startDate.Format("2006-01-02") == endDate.Format("2006-01-02") {
+		endDate = endDate.AddDate(0, 0, 1).Add(-time.Second)
+	}
+
+	return startDate, endDate, nil
 }
 
 // executeHealthSummaryTool implements the health summary tool
@@ -430,14 +483,9 @@ func (s *MCPServer) executeHealthSummaryTool(arguments json.RawMessage) (string,
 	}
 
 	// Parse dates
-	startDate, err := time.Parse("2006-01-02", input.StartDate)
+	startDate, endDate, err := parseDateRange(input.StartDate, input.EndDate)
 	if err != nil {
-		return "", fmt.Errorf("invalid start_date format: %w", err)
-	}
-
-	endDate, err := time.Parse("2006-01-02", input.EndDate)
-	if err != nil {
-		return "", fmt.Errorf("invalid end_date format: %w", err)
+		return "", err
 	}
 
 	// Validate date range
@@ -543,14 +591,9 @@ func (s *MCPServer) executeStressAnalysisTool(arguments json.RawMessage) (string
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	startDate, err := time.Parse("2006-01-02", input.StartDate)
+	startDate, endDate, err := parseDateRange(input.StartDate, input.EndDate)
 	if err != nil {
-		return "", fmt.Errorf("invalid start_date format: %w", err)
-	}
-
-	endDate, err := time.Parse("2006-01-02", input.EndDate)
-	if err != nil {
-		return "", fmt.Errorf("invalid end_date format: %w", err)
+		return "", err
 	}
 
 	userID := 0
@@ -615,14 +658,9 @@ func (s *MCPServer) executeSleepAnalysisTool(arguments json.RawMessage) (string,
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	startDate, err := time.Parse("2006-01-02", input.StartDate)
+	startDate, endDate, err := parseDateRange(input.StartDate, input.EndDate)
 	if err != nil {
-		return "", fmt.Errorf("invalid start_date format: %w", err)
-	}
-
-	endDate, err := time.Parse("2006-01-02", input.EndDate)
-	if err != nil {
-		return "", fmt.Errorf("invalid end_date format: %w", err)
+		return "", err
 	}
 
 	userID := 0
@@ -676,14 +714,9 @@ func (s *MCPServer) executeActivityAnalysisTool(arguments json.RawMessage) (stri
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	startDate, err := time.Parse("2006-01-02", input.StartDate)
+	startDate, endDate, err := parseDateRange(input.StartDate, input.EndDate)
 	if err != nil {
-		return "", fmt.Errorf("invalid start_date format: %w", err)
-	}
-
-	endDate, err := time.Parse("2006-01-02", input.EndDate)
-	if err != nil {
-		return "", fmt.Errorf("invalid end_date format: %w", err)
+		return "", err
 	}
 
 	userID := 0
@@ -1081,4 +1114,176 @@ func (s *MCPServer) findMax(values []float64) float64 {
 		}
 	}
 	return max
+}
+
+// executeWhoopAuthSetupTool helps users set up Whoop OAuth authentication
+func (s *MCPServer) executeWhoopAuthSetupTool(arguments json.RawMessage) (string, error) {
+	var input struct {
+		ClientID          string `json:"client_id,omitempty"`
+		AuthorizationCode string `json:"authorization_code,omitempty"`
+		ClientSecret      string `json:"client_secret,omitempty"`
+	}
+
+	if err := json.Unmarshal(arguments, &input); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	// If only client_id provided, generate authorization URL
+	if input.ClientID != "" && input.AuthorizationCode == "" {
+		return s.generateAuthURL(input.ClientID), nil
+	}
+
+	// If authorization code provided, exchange for tokens
+	if input.AuthorizationCode != "" && input.ClientSecret != "" {
+		return s.exchangeCodeForTokens(input.ClientID, input.ClientSecret, input.AuthorizationCode)
+	}
+
+	// Otherwise, provide general setup instructions
+	return s.generateAuthInstructions(), nil
+}
+
+// generateAuthURL creates the Whoop OAuth authorization URL
+func (s *MCPServer) generateAuthURL(clientID string) string {
+	baseURL := "https://api.prod.whoop.com/oauth/oauth2/auth"
+
+	params := url.Values{}
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", "http://localhost:3000/callback")
+	params.Set("response_type", "code")
+	params.Set("scope", "read:recovery read:sleep read:workout read:cycles read:profile offline")
+	params.Set("state", "whoop-mcp-auth")
+
+	authURL := baseURL + "?" + params.Encode()
+
+	return fmt.Sprintf(`# Whoop OAuth Setup - Step 1
+
+## 🔗 Authorization URL Generated
+
+**Click this URL to authorize your Whoop app:**
+
+%s
+
+## 📋 Next Steps:
+
+1. **Open the URL above** in your browser
+2. **Log in to Whoop** and authorize the app
+3. **Copy the authorization code** from the callback URL
+4. **Ask me to exchange the code for tokens** by saying:
+   "Exchange my Whoop authorization code: [YOUR_CODE_HERE]"
+
+## ⚠️ Note:
+The redirect URL may show an error page - that's normal! Just copy the 'code' parameter from the URL bar.
+
+Example callback URL:
+http://localhost:3000/callback?code=ABC123...&state=whoop-mcp-auth
+
+Copy everything after "code=" and before "&state".`, authURL)
+}
+
+// exchangeCodeForTokens exchanges authorization code for access/refresh tokens
+func (s *MCPServer) exchangeCodeForTokens(clientID, clientSecret, authCode string) (string, error) {
+	tokenURL := "https://api.prod.whoop.com/oauth/oauth2/token"
+
+	data := url.Values{}
+	data.Set("grant_type", "authorization_code")
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("redirect_uri", "http://localhost:3000/callback")
+	data.Set("code", authCode)
+
+	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to exchange authorization code: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read token response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return fmt.Sprintf(`# ❌ Token Exchange Failed
+
+**Error (status %d):**
+%s
+
+## Common Issues:
+- Authorization code already used (codes are single-use)
+- Authorization code expired (they expire quickly)
+- Wrong redirect URI (must match exactly)
+- Invalid client credentials
+
+## 🔄 Try Again:
+Ask me to generate a new authorization URL with your client_id.`, resp.StatusCode, string(body)), nil
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
+	}
+
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse token response: %w", err)
+	}
+
+	return fmt.Sprintf(`# ✅ Success! Whoop Tokens Obtained
+
+## 🎉 Your Authentication is Complete!
+
+**Access Token:** %s
+**Refresh Token:** %s
+**Expires in:** %d seconds (%.1f hours)
+**Scopes:** %s
+
+## 🚀 Next Steps:
+
+1. **Update your .env file** with the access token:
+   %s
+   
+2. **Restart Claude Desktop** to load the new token
+
+3. **Test your connection** by asking me:
+   "Analyze my Whoop data from yesterday"
+
+## 💡 Pro Tip:
+Save the refresh token! It can be used to get new access tokens when the current one expires.`,
+		tokenResp.AccessToken,
+		tokenResp.RefreshToken,
+		tokenResp.ExpiresIn,
+		float64(tokenResp.ExpiresIn)/3600,
+		tokenResp.Scope,
+		fmt.Sprintf("WHOOP_API_KEY=%s", tokenResp.AccessToken)), nil
+}
+
+// generateAuthInstructions provides general setup instructions
+func (s *MCPServer) generateAuthInstructions() string {
+	return `# 🔐 Whoop OAuth Setup Guide
+
+## Prerequisites:
+1. **Whoop Developer Account** - Sign up at https://developer.whoop.com
+2. **Create an App** in the Whoop Developer Portal
+3. **Set Redirect URI** to: http://localhost:3000/callback
+
+## Setup Process:
+
+### Step 1: Get Authorization URL
+Ask me: "Generate Whoop auth URL for client_id: YOUR_CLIENT_ID"
+
+### Step 2: Authorize App
+I'll provide a URL to authorize your app with Whoop
+
+### Step 3: Exchange Code
+After authorization, ask me: "Exchange Whoop code: YOUR_CODE with secret: YOUR_SECRET"
+
+### Step 4: Update Configuration
+I'll provide the access token to add to your .env file
+
+## 💡 Need Help?
+- Ask me to "Generate Whoop auth URL" if you have a client_id
+- Visit https://developer.whoop.com for app setup instructions
+- The process takes just a few minutes!`
 }

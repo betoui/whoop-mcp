@@ -63,7 +63,7 @@ type WhoopRecovery struct {
 	Score      struct {
 		UserCalibrating  bool    `json:"user_calibrating"`
 		RecoveryScore    float64 `json:"recovery_score"`
-		RestingHeartRate int     `json:"resting_heart_rate"`
+		RestingHeartRate float64 `json:"resting_heart_rate"`
 		HRVRmssd         float64 `json:"hrv_rmssd_milli"`
 		SkinTempCelsius  float64 `json:"skin_temp_celsius"`
 		SpO2Percentage   float64 `json:"spo2_percentage"`
@@ -99,8 +99,8 @@ type WhoopSleep struct {
 			NeedFromRecentNapMilli    int `json:"need_from_recent_nap_milli"`
 		} `json:"sleep_needed"`
 		RespiratoryRate            float64 `json:"respiratory_rate"`
-		SleepPerformancePercentage int     `json:"sleep_performance_percentage"`
-		SleepConsistencyPercentage int     `json:"sleep_consistency_percentage"`
+		SleepPerformancePercentage float64 `json:"sleep_performance_percentage"`
+		SleepConsistencyPercentage float64 `json:"sleep_consistency_percentage"`
 		SleepEfficiencyPercentage  float64 `json:"sleep_efficiency_percentage"`
 	} `json:"score"`
 }
@@ -254,21 +254,21 @@ type WhoopAPIResponse struct {
 }
 
 type WhoopRecoveryResponse struct {
-	Data      []WhoopRecovery `json:"data"`
+	Data      []WhoopRecovery `json:"records"`
 	NextToken *string         `json:"next_token,omitempty"`
 }
 
 type WhoopSleepResponse struct {
-	Data      []WhoopSleep `json:"data"`
+	Data      []WhoopSleep `json:"records"`
 	NextToken *string      `json:"next_token,omitempty"`
 }
 
 type WhoopWorkoutResponse struct {
-	Data      []WhoopWorkout `json:"data"`
+	Data      []WhoopWorkout `json:"records"`
 	NextToken *string        `json:"next_token,omitempty"`
 }
 
 type WhoopCycleResponse struct {
-	Data      []WhoopCycle `json:"data"`
+	Data      []WhoopCycle `json:"records"`
 	NextToken *string      `json:"next_token,omitempty"`
 }

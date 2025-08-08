@@ -201,7 +201,7 @@ func (h *HealthAnalyzer) analyzeStressIndicators(recoveries []WhoopRecovery, sle
 	}
 
 	var hrvValues []float64
-	var restingHRValues []int
+	var restingHRValues []float64
 	var recoveryScores []float64
 
 	elevatedHRVDays := 0
@@ -228,7 +228,7 @@ func (h *HealthAnalyzer) analyzeStressIndicators(recoveries []WhoopRecovery, sle
 
 		// Check for elevated resting heart rate
 		if len(restingHRValues) > 1 {
-			avgRHR := h.calculateMeanInt(restingHRValues[:len(restingHRValues)-1])
+			avgRHR := h.calculateMean(restingHRValues[:len(restingHRValues)-1])
 			if rhr > avgRHR+10 { // 10 bpm above baseline
 				highRestingHRDays++
 			}

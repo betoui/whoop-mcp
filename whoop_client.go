@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,18 +21,30 @@ const (
 
 // WhoopClient handles all interactions with the Whoop API
 type WhoopClient struct {
-	client      *http.Client
-	rateLimiter *rate.Limiter
-	apiKey      string
-	baseURL     string
+	client       *http.Client
+	rateLimiter  *rate.Limiter
+	apiKey       string
+	refreshToken string
+	clientID     string
+	clientSecret string
+	baseURL      string
 }
 
 // NewWhoopClient creates a new Whoop API client with rate limiting
 func NewWhoopClient() (*WhoopClient, error) {
-	apiKey := os.Getenv("WHOOP_API_KEY")
+	// Try access token first (OAuth), then fall back to API key
+	apiKey := os.Getenv("WHOOP_ACCESS_TOKEN")
 	if apiKey == "" {
-		return nil, fmt.Errorf("WHOOP_API_KEY environment variable is required")
+		apiKey = os.Getenv("WHOOP_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("WHOOP_ACCESS_TOKEN or WHOOP_API_KEY environment variable is required")
+		}
 	}
+
+	// Get refresh token and OAuth credentials for auto-refresh
+	refreshToken := os.Getenv("WHOOP_REFRESH_TOKEN")
+	clientID := os.Getenv("WHOOP_CLIENT_ID")
+	clientSecret := os.Getenv("WHOOP_CLIENT_SECRET")
 
 	// Rate limiter: 100 requests per minute (conservative approach)
 	rateLimiter := rate.NewLimiter(rate.Every(time.Minute/100), 10)
@@ -39,52 +53,58 @@ func NewWhoopClient() (*WhoopClient, error) {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		rateLimiter: rateLimiter,
-		apiKey:      apiKey,
-		baseURL:     WhoopAPIBaseURL + "/" + WhoopAPIVersion,
+		rateLimiter:  rateLimiter,
+		apiKey:       apiKey,
+		refreshToken: refreshToken,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		baseURL:      WhoopAPIBaseURL,
 	}, nil
 }
 
-// makeRequest performs an authenticated HTTP request to the Whoop API
+// makeRequest performs an HTTP request to the Whoop API
 func (w *WhoopClient) makeRequest(endpoint string, params url.Values) ([]byte, error) {
-	// Respect rate limiting
-	if err := w.rateLimiter.Wait(nil); err != nil {
+	// Wait for rate limiter
+	if err := w.rateLimiter.Wait(context.Background()); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
 	}
 
-	// Build URL
-	requestURL := w.baseURL + endpoint
-	if params != nil && len(params) > 0 {
-		requestURL += "?" + params.Encode()
+	fullURL := w.baseURL + endpoint
+	if len(params) > 0 {
+		fullURL += "?" + params.Encode()
 	}
 
-	// Create request
-	req, err := http.NewRequest("GET", requestURL, nil)
+	// Try the request
+	body, statusCode, err := w.doRequest(fullURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
-	// Add authentication header
-	req.Header.Set("Authorization", "Bearer "+w.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Whoop-MCP-Server/1.0")
+	// If unauthorized and we have refresh capabilities, try to refresh token
+	if statusCode == 401 && w.canRefreshToken() {
+		log.Printf("Access token expired, attempting to refresh...")
 
-	// Execute request
-	resp, err := w.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		newToken, err := w.refreshAccessToken()
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh access token: %w", err)
+		}
+
+		w.apiKey = newToken
+		log.Printf("Successfully refreshed access token")
+
+		// Retry the original request with new token
+		body, statusCode, err = w.doRequest(fullURL)
+		if err != nil {
+			return nil, err
+		}
+
+		if statusCode == 401 {
+			return nil, fmt.Errorf("authentication failed even after token refresh")
+		}
 	}
-	defer resp.Body.Close()
 
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// Handle HTTP errors
-	if resp.StatusCode != http.StatusOK {
-		return nil, w.handleAPIError(resp.StatusCode, body)
+	if statusCode != 200 {
+		return nil, fmt.Errorf("API request failed with status %d: %s", statusCode, string(body))
 	}
 
 	return body, nil
@@ -114,7 +134,7 @@ func (w *WhoopClient) handleAPIError(statusCode int, body []byte) error {
 
 // GetUser retrieves the authenticated user's profile information
 func (w *WhoopClient) GetUser() (*WhoopUser, error) {
-	body, err := w.makeRequest("/user/profile/basic", nil)
+	body, err := w.makeRequest("/v2/user/profile/basic", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user profile: %w", err)
 	}
@@ -130,9 +150,9 @@ func (w *WhoopClient) GetUser() (*WhoopUser, error) {
 // GetRecoveryData retrieves recovery data for a date range
 func (w *WhoopClient) GetRecoveryData(startDate, endDate time.Time, userID *int) ([]WhoopRecovery, error) {
 	params := url.Values{}
-	params.Set("start", startDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("end", endDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("limit", "50") // Maximum per request
+	params.Set("start", startDate.Format(time.RFC3339))
+	params.Set("end", endDate.Format(time.RFC3339))
+	params.Set("limit", "25") // Maximum per request
 
 	var allRecoveries []WhoopRecovery
 	nextToken := ""
@@ -142,7 +162,7 @@ func (w *WhoopClient) GetRecoveryData(startDate, endDate time.Time, userID *int)
 			params.Set("nextToken", nextToken)
 		}
 
-		body, err := w.makeRequest("/recovery", params)
+		body, err := w.makeRequest("/v2/recovery", params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get recovery data: %w", err)
 		}
@@ -154,7 +174,7 @@ func (w *WhoopClient) GetRecoveryData(startDate, endDate time.Time, userID *int)
 
 		allRecoveries = append(allRecoveries, response.Data...)
 
-		// Check if there's more data
+		// Check if there are more pages
 		if response.NextToken == nil || *response.NextToken == "" {
 			break
 		}
@@ -167,11 +187,11 @@ func (w *WhoopClient) GetRecoveryData(startDate, endDate time.Time, userID *int)
 // GetSleepData retrieves sleep data for a date range
 func (w *WhoopClient) GetSleepData(startDate, endDate time.Time, userID *int) ([]WhoopSleep, error) {
 	params := url.Values{}
-	params.Set("start", startDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("end", endDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("limit", "50")
+	params.Set("start", startDate.Format(time.RFC3339))
+	params.Set("end", endDate.Format(time.RFC3339))
+	params.Set("limit", "25") // Maximum per request
 
-	var allSleep []WhoopSleep
+	var allSleeps []WhoopSleep
 	nextToken := ""
 
 	for {
@@ -179,7 +199,7 @@ func (w *WhoopClient) GetSleepData(startDate, endDate time.Time, userID *int) ([
 			params.Set("nextToken", nextToken)
 		}
 
-		body, err := w.makeRequest("/activity/sleep", params)
+		body, err := w.makeRequest("/v2/activity/sleep", params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get sleep data: %w", err)
 		}
@@ -189,23 +209,24 @@ func (w *WhoopClient) GetSleepData(startDate, endDate time.Time, userID *int) ([
 			return nil, fmt.Errorf("failed to parse sleep data: %w", err)
 		}
 
-		allSleep = append(allSleep, response.Data...)
+		allSleeps = append(allSleeps, response.Data...)
 
+		// Check if there are more pages
 		if response.NextToken == nil || *response.NextToken == "" {
 			break
 		}
 		nextToken = *response.NextToken
 	}
 
-	return allSleep, nil
+	return allSleeps, nil
 }
 
 // GetWorkoutData retrieves workout data for a date range
 func (w *WhoopClient) GetWorkoutData(startDate, endDate time.Time, userID *int) ([]WhoopWorkout, error) {
 	params := url.Values{}
-	params.Set("start", startDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("end", endDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("limit", "50")
+	params.Set("start", startDate.Format(time.RFC3339))
+	params.Set("end", endDate.Format(time.RFC3339))
+	params.Set("limit", "25") // Maximum per request
 
 	var allWorkouts []WhoopWorkout
 	nextToken := ""
@@ -215,7 +236,7 @@ func (w *WhoopClient) GetWorkoutData(startDate, endDate time.Time, userID *int) 
 			params.Set("nextToken", nextToken)
 		}
 
-		body, err := w.makeRequest("/activity/workout", params)
+		body, err := w.makeRequest("/v2/activity/workout", params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get workout data: %w", err)
 		}
@@ -227,6 +248,7 @@ func (w *WhoopClient) GetWorkoutData(startDate, endDate time.Time, userID *int) 
 
 		allWorkouts = append(allWorkouts, response.Data...)
 
+		// Check if there are more pages
 		if response.NextToken == nil || *response.NextToken == "" {
 			break
 		}
@@ -239,9 +261,9 @@ func (w *WhoopClient) GetWorkoutData(startDate, endDate time.Time, userID *int) 
 // GetCycleData retrieves physiological cycle data for a date range
 func (w *WhoopClient) GetCycleData(startDate, endDate time.Time, userID *int) ([]WhoopCycle, error) {
 	params := url.Values{}
-	params.Set("start", startDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("end", endDate.Format("2006-01-02T15:04:05Z"))
-	params.Set("limit", "50")
+	params.Set("start", startDate.Format(time.RFC3339))
+	params.Set("end", endDate.Format(time.RFC3339))
+	params.Set("limit", "25") // Maximum per request
 
 	var allCycles []WhoopCycle
 	nextToken := ""
@@ -251,7 +273,7 @@ func (w *WhoopClient) GetCycleData(startDate, endDate time.Time, userID *int) ([
 			params.Set("nextToken", nextToken)
 		}
 
-		body, err := w.makeRequest("/cycle", params)
+		body, err := w.makeRequest("/v2/cycle", params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cycle data: %w", err)
 		}
@@ -263,6 +285,7 @@ func (w *WhoopClient) GetCycleData(startDate, endDate time.Time, userID *int) ([
 
 		allCycles = append(allCycles, response.Data...)
 
+		// Check if there are more pages
 		if response.NextToken == nil || *response.NextToken == "" {
 			break
 		}
@@ -270,6 +293,120 @@ func (w *WhoopClient) GetCycleData(startDate, endDate time.Time, userID *int) ([
 	}
 
 	return allCycles, nil
+}
+
+// doRequest performs the actual HTTP request
+func (w *WhoopClient) doRequest(fullURL string) ([]byte, int, error) {
+	// Create request
+	req, err := http.NewRequest("GET", fullURL, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add authentication header
+	req.Header.Set("Authorization", "Bearer "+w.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Whoop-MCP-Server/1.0")
+
+	// Execute request
+	resp, err := w.client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return body, resp.StatusCode, nil
+}
+
+// canRefreshToken checks if we have the necessary credentials for token refresh
+func (w *WhoopClient) canRefreshToken() bool {
+	return w.refreshToken != "" && w.clientID != "" && w.clientSecret != ""
+}
+
+// refreshAccessToken uses the refresh token to get a new access token
+func (w *WhoopClient) refreshAccessToken() (string, error) {
+	tokenURL := "https://api.prod.whoop.com/oauth/oauth2/token"
+
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", w.refreshToken)
+	data.Set("client_id", w.clientID)
+	data.Set("client_secret", w.clientSecret)
+
+	resp, err := http.PostForm(tokenURL, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to make refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read refresh response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("token refresh failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token,omitempty"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse refresh response: %w", err)
+	}
+
+	// Update refresh token if a new one was provided
+	if tokenResp.RefreshToken != "" {
+		w.refreshToken = tokenResp.RefreshToken
+	}
+
+	// Optionally update .env file with new tokens
+	w.updateEnvFile(tokenResp.AccessToken, w.refreshToken)
+
+	return tokenResp.AccessToken, nil
+}
+
+// updateEnvFile updates the .env file with new tokens (optional convenience)
+func (w *WhoopClient) updateEnvFile(accessToken, refreshToken string) {
+	// This is a best-effort attempt - don't fail if we can't update the file
+	envContent := fmt.Sprintf(`# Whoop MCP Server Configuration (V2 API)
+
+# Required: Your Whoop API access token
+WHOOP_API_KEY=%s
+
+# Optional: Refresh token for token renewal
+WHOOP_REFRESH_TOKEN=%s
+
+# Optional: OAuth credentials for auto-refresh
+# WHOOP_CLIENT_ID=your_client_id
+# WHOOP_CLIENT_SECRET=your_client_secret
+
+# Optional: Custom API base URL (defaults to production V2)
+# WHOOP_API_BASE_URL=https://api.prod.whoop.com/developer
+
+# Optional: Rate limiting configuration (requests per minute)
+# WHOOP_RATE_LIMIT=100
+
+# Optional: Request timeout in seconds
+# WHOOP_REQUEST_TIMEOUT=30
+`, accessToken, refreshToken)
+
+	err := os.WriteFile(".env", []byte(envContent), 0600)
+	if err != nil {
+		log.Printf("Warning: Could not update .env file with new tokens: %v", err)
+	} else {
+		log.Printf("Updated .env file with refreshed tokens")
+	}
 }
 
 // ValidateConnection tests the API connection and authentication
