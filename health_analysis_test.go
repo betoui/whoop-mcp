@@ -59,7 +59,7 @@ func TestHealthAnalyzer_AnalyzeRecoveryTrend(t *testing.T) {
 				Score: struct {
 					UserCalibrating  bool    `json:"user_calibrating"`
 					RecoveryScore    float64 `json:"recovery_score"`
-					RestingHeartRate int     `json:"resting_heart_rate"`
+					RestingHeartRate float64 `json:"resting_heart_rate"`
 					HRVRmssd         float64 `json:"hrv_rmssd_milli"`
 					SkinTempCelsius  float64 `json:"skin_temp_celsius"`
 					SpO2Percentage   float64 `json:"spo2_percentage"`
@@ -72,7 +72,7 @@ func TestHealthAnalyzer_AnalyzeRecoveryTrend(t *testing.T) {
 				Score: struct {
 					UserCalibrating  bool    `json:"user_calibrating"`
 					RecoveryScore    float64 `json:"recovery_score"`
-					RestingHeartRate int     `json:"resting_heart_rate"`
+					RestingHeartRate float64 `json:"resting_heart_rate"`
 					HRVRmssd         float64 `json:"hrv_rmssd_milli"`
 					SkinTempCelsius  float64 `json:"skin_temp_celsius"`
 					SpO2Percentage   float64 `json:"spo2_percentage"`

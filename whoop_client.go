@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -338,8 +339,15 @@ func (w *WhoopClient) refreshAccessToken() (string, error) {
 	data.Set("refresh_token", w.refreshToken)
 	data.Set("client_id", w.clientID)
 	data.Set("client_secret", w.clientSecret)
+	data.Set("scope", "offline")
 
-	resp, err := http.PostForm(tokenURL, data)
+	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := w.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to make refresh request: %w", err)
 	}
